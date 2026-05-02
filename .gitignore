@@ -1,0 +1,12 @@
+debug/
+__pycache__/
+*.py[cod]
+
+.venv/
+.vscode/
+
+hand_state.json
+
+*.log
+*.tmp
+*.~lock.*
