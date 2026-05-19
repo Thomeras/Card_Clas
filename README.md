@@ -61,11 +61,7 @@ python main.py
 
 Copy the printed `CARD_SLOTS` list from `select_slot.py` into `main.py`.
 
-## Model and Training
-
-There is no trained machine-learning model in this repository. No neural
-network, optimizer, epoch count, train/validation split, or learned weights are
-used.
+## Model
 
 The "model" is a deterministic OpenCV template-matching pipeline:
 
