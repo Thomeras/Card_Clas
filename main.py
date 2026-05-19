@@ -1,5 +1,4 @@
 import argparse
-import json
 import os
 
 import cv2
@@ -17,37 +16,22 @@ except ImportError:
 
 
 TEMPLATE_DIR = "Karty_new"
-STATE_PATH = "hand_state.json"
 DEBUG_DIR = "debug"
+MIN_SCORE = 0.80
+NORMALIZED_SIZE = (90, 125)
 
-# Pozice jsou cislovane tak, jak pokerova handa prichazi:
-# 1-2 tvoje karty, 3-5 flop, 6 turn, 7 river.
-#
-# Dulezite: sloty 3-7 je potreba jednou zmerit pro tvoje pokerove okno.
-# Spust `python select_slot.py --screenshot`, vyber postupne vsech 7 pozic
-# a vypsany CARD_SLOTS sem zkopiruj.
+# Card slot rectangles are measured as (x, y, width, height) in screenshot pixels.
+# The bundled sample image is configured for these two visible card slots.
 CARD_SLOTS = [
     (573, 764, 92, 127),
     (951, 773, 90, 125),
-    None,
-    None,
-    None,
-    None,
-    None,
-]
-
-STREETS = [
-    ("preflop", [0, 1], "hole_cards"),
-    ("flop", [2, 3, 4], "board"),
-    ("turn", [5], "board"),
-    ("river", [6], "board"),
 ]
 
 
 def load_templates(template_dir=TEMPLATE_DIR):
     templates = {}
 
-    for filename in os.listdir(template_dir):
+    for filename in sorted(os.listdir(template_dir)):
         if not filename.lower().endswith((".png", ".jpg", ".jpeg", ".webp")):
             continue
 
@@ -56,7 +40,7 @@ def load_templates(template_dir=TEMPLATE_DIR):
         img = cv2.imread(path)
 
         if img is None:
-            print(f"Varovani: nepodarilo se nacist {path}")
+            print(f"Warning: could not read template {path}")
             continue
 
         templates[card_name] = img
@@ -64,7 +48,7 @@ def load_templates(template_dir=TEMPLATE_DIR):
     return templates
 
 
-def normalize_card(img, size=(90, 125)):
+def normalize_card(img, size=NORMALIZED_SIZE):
     img = cv2.resize(img, size)
     return cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
@@ -112,7 +96,7 @@ def take_screenshot():
         return cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
 
     raise RuntimeError(
-        "Neni dostupny zadny screenshot backend. Nainstaluj `mss`: pip install mss"
+        "No screenshot backend is available. Install mss with: pip install mss"
     )
 
 
@@ -120,62 +104,40 @@ def load_image(path):
     if path:
         img = cv2.imread(path)
         if img is None:
-            raise RuntimeError(f"Nepodarilo se nacist obrazek: {path}")
+            raise RuntimeError(f"Could not read image: {path}")
         return img
 
     return take_screenshot()
 
 
-def load_state(path=STATE_PATH):
-    if not os.path.exists(path):
-        return {"street_index": 0, "hole_cards": [], "board": []}
-
-    with open(path, "r", encoding="utf-8") as state_file:
-        return json.load(state_file)
-
-
-def save_state(state, path=STATE_PATH):
-    with open(path, "w", encoding="utf-8") as state_file:
-        json.dump(state, state_file, indent=2)
-
-
-def reset_state(path=STATE_PATH):
-    if os.path.exists(path):
-        os.remove(path)
-
-
 def crop_slot(img, slot):
     x, y, w, h = slot
-    return img[y:y + h, x:x + w]
+    crop = img[y:y + h, x:x + w]
+
+    if crop.size == 0:
+        raise RuntimeError(f"Slot {slot} is outside the image bounds.")
+
+    return crop
 
 
-def validate_slots(slot_indexes):
-    missing = [index + 1 for index in slot_indexes if CARD_SLOTS[index] is None]
+def read_cards(img, templates, min_score=MIN_SCORE, debug_dir=DEBUG_DIR):
+    if debug_dir:
+        os.makedirs(debug_dir, exist_ok=True)
 
-    if missing:
-        raise RuntimeError(
-            "Chybi souradnice pro pozice: "
-            + ", ".join(str(index) for index in missing)
-            + ". Spust `python select_slot.py --screenshot`, vyber vsech 7 pozic "
-            + "a dopln CARD_SLOTS v main.py."
-        )
-
-
-def read_cards_from_slots(img, slot_indexes, templates, street_name):
-    os.makedirs(DEBUG_DIR, exist_ok=True)
     cards = []
 
-    for slot_index in slot_indexes:
-        slot = CARD_SLOTS[slot_index]
+    for slot_number, slot in enumerate(CARD_SLOTS, start=1):
         slot_img = crop_slot(img, slot)
 
-        debug_path = os.path.join(DEBUG_DIR, f"{street_name}_pos_{slot_index + 1}.png")
-        cv2.imwrite(debug_path, slot_img)
+        if debug_dir:
+            debug_path = os.path.join(debug_dir, f"slot_{slot_number}.png")
+            cv2.imwrite(debug_path, slot_img)
 
         card_name, score, top5 = classify_card(slot_img, templates)
-        cards.append(card_name)
+        result = format_card_name(card_name) if score >= min_score else "UNKNOWN"
+        cards.append(result)
 
-        print(f"Pozice {slot_index + 1}: {format_card_name(card_name)} | score={score:.3f}")
+        print(f"Slot {slot_number}: {result} | score={score:.3f}")
         print("Top 5:")
         for name, top_score in top5:
             print(f"  {format_card_name(name):5s} {top_score:.3f}")
@@ -183,79 +145,46 @@ def read_cards_from_slots(img, slot_indexes, templates, street_name):
     return cards
 
 
-def apply_street(state, img, templates):
-    street_index = state.get("street_index", 0)
-
-    if street_index >= len(STREETS):
-        raise RuntimeError(
-            "Handa uz ma ulozene vsechny streety. "
-            "Pro novou handu spust `python main.py --reset`."
-        )
-
-    street_name, slot_indexes, target = STREETS[street_index]
-    validate_slots(slot_indexes)
-
-    print(f"Street: {street_name}")
-    cards = read_cards_from_slots(img, slot_indexes, templates, street_name)
-
-    if target == "hole_cards":
-        state["hole_cards"] = cards
-    else:
-        state["board"].extend(cards)
-
-    state["street_index"] = street_index + 1
-    return state
-
-
-def print_state(state):
-    hole_cards = [format_card_name(card) for card in state.get("hole_cards", [])]
-    board = [format_card_name(card) for card in state.get("board", [])]
-
-    print()
-    print("Aktualni seznam:")
-    print(f"  Tvoje karty: {hole_cards}")
-    print(f"  Board:       {board}")
-
-
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Nacte karty z aktualniho screenshotu podle faze handy."
+        description="Reads configured poker-card slots from a screenshot or image."
     )
     parser.add_argument(
         "--image",
-        help="Volitelny testovaci obrazek misto aktualniho screenshotu.",
+        help="Read this image instead of taking a live screenshot.",
     )
     parser.add_argument(
-        "--reset",
-        action="store_true",
-        help="Smaze ulozeny stav handy a zacne znovu od pozic 1-2.",
+        "--template-dir",
+        default=TEMPLATE_DIR,
+        help=f"Directory with one template image per card. Default: {TEMPLATE_DIR}",
     )
     parser.add_argument(
-        "--state",
-        default=STATE_PATH,
-        help=f"Cesta ke stavovemu souboru. Vychozi: {STATE_PATH}",
+        "--min-score",
+        type=float,
+        default=MIN_SCORE,
+        help=f"Minimum match score required for a known card. Default: {MIN_SCORE}",
+    )
+    parser.add_argument(
+        "--debug-dir",
+        default=DEBUG_DIR,
+        help=f"Directory for cropped slot previews. Use an empty value to disable. Default: {DEBUG_DIR}",
     )
     return parser.parse_args()
 
 
 def main():
     args = parse_args()
-
-    if args.reset:
-        reset_state(args.state)
-        print("Stav handy smazan. Dalsi volani zacne od pozic 1-2.")
-        return
-
-    templates = load_templates()
+    templates = load_templates(args.template_dir)
 
     if not templates:
-        raise RuntimeError(f"Ve slozce {TEMPLATE_DIR} nejsou zadne obrazky.")
+        raise RuntimeError(f"No template images found in {args.template_dir}.")
 
     img = load_image(args.image)
-    state = load_state(args.state)
-    state = apply_street(state, img, templates)
-    save_state(state, args.state)
-    print_state(state)
+    debug_dir = args.debug_dir or None
+    cards = read_cards(img, templates, args.min_score, debug_dir)
+
+    print()
+    print("Detected:", cards)
 
 
 if __name__ == "__main__":

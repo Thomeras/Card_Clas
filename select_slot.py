@@ -22,7 +22,6 @@ rectangles = []
 def draw_preview(img):
     preview = img.copy()
 
-    # vykresli hotové obdélníky
     for i, (x, y, w, h) in enumerate(rectangles, start=1):
         cv2.rectangle(preview, (x, y), (x + w, y + h), (0, 255, 0), 2)
         cv2.putText(
@@ -35,7 +34,6 @@ def draw_preview(img):
             2,
         )
 
-    # vykresli rozpracovaný první bod
     if len(points) == 1:
         x, y = points[0]
         cv2.circle(preview, (x, y), 5, (0, 255, 255), -1)
@@ -50,7 +48,7 @@ def mouse_callback(event, x, y, flags, param):
 
     if event == cv2.EVENT_LBUTTONDOWN:
         points.append((x, y))
-        print(f"Klik: x={x}, y={y}")
+        print(f"Click: x={x}, y={y}")
 
         if len(points) == 2:
             x1, y1 = points[0]
@@ -65,8 +63,8 @@ def mouse_callback(event, x, y, flags, param):
             h = bottom - top
 
             rectangles.append((left, top, w, h))
-            print(f"Přidán slot: (x={left}, y={top}, w={w}, h={h})")
-            print(f"Rohy byly: (x1={left}, y1={top}, x2={right}, y2={bottom})")
+            print(f"Added slot: (x={left}, y={top}, w={w}, h={h})")
+            print(f"Corners: (x1={left}, y1={top}, x2={right}, y2={bottom})")
             points = []
 
         cv2.imshow("Select slots", draw_preview(img))
@@ -94,10 +92,10 @@ def save_crops(img):
             2,
         )
 
-        print(f"Crop uložen: {crop_path}")
+        print(f"Saved crop: {crop_path}")
 
     cv2.imwrite("debug/slots_preview.png", preview)
-    print("Preview uložen: debug/slots_preview.png")
+    print("Saved preview: debug/slots_preview.png")
 
 
 def take_screenshot():
@@ -114,21 +112,21 @@ def take_screenshot():
         return cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
 
     raise RuntimeError(
-        "Neni dostupny zadny screenshot backend. Nainstaluj `mss`: pip install mss"
+        "No screenshot backend is available. Install mss with: pip install mss"
     )
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Vyber souradnice slotu karet.")
+    parser = argparse.ArgumentParser(description="Measure card slot coordinates.")
     parser.add_argument(
         "--screenshot",
         action="store_true",
-        help="Pouzije aktualni screenshot obrazovky misto image.png.",
+        help="Use a live screenshot instead of image.png.",
     )
     parser.add_argument(
         "--image",
         default="image.png",
-        help="Obrazek pro mereni slotu, pokud neni pouzity --screenshot.",
+        help="Image used for measuring slots when --screenshot is not set.",
     )
     return parser.parse_args()
 
@@ -138,13 +136,13 @@ def main():
     img = take_screenshot() if args.screenshot else cv2.imread(args.image)
 
     if img is None:
-        raise RuntimeError(f"Nepodarilo se nacist {args.image}")
+        raise RuntimeError(f"Could not read {args.image}")
 
-    print("Ovládání:")
-    print("- levé tlačítko: klikni levý horní a pravý dolní roh slotu")
-    print("- u: vrátit poslední slot")
-    print("- s: uložit cropy")
-    print("- q: konec a vypsat CARD_SLOTS")
+    print("Controls:")
+    print("- left mouse button: click the top-left and bottom-right slot corners")
+    print("- u: undo the last slot")
+    print("- s: save slot crops")
+    print("- q: quit and print CARD_SLOTS")
     print()
 
     cv2.imshow("Select slots", draw_preview(img))
@@ -156,7 +154,7 @@ def main():
         if key == ord("u"):
             if rectangles:
                 removed = rectangles.pop()
-                print(f"Odstraněn poslední slot: {removed}")
+                print(f"Removed last slot: {removed}")
                 cv2.imshow("Select slots", draw_preview(img))
 
         elif key == ord("s"):
@@ -167,13 +165,13 @@ def main():
 
     cv2.destroyAllWindows()
 
-    print("\nSPRÁVNÝ FORMÁT PRO PROGRAM:")
+    print("\nFORMAT FOR main.py:")
     print("CARD_SLOTS = [")
     for x, y, w, h in rectangles:
         print(f"    ({x}, {y}, {w}, {h}),")
     print("]")
 
-    print("\nJen pro kontrolu, formát rohů:")
+    print("\nCorner format for reference:")
     print("RECT_CORNERS = [")
     for x, y, w, h in rectangles:
         print(f"    ({x}, {y}, {x + w}, {y + h}),")
